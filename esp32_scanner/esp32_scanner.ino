@@ -4,13 +4,14 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <mbedtls/md.h>
+#include <LiquidCrystal.h>
 
 #define RST_PIN         22
 #define SS_PIN          21
-#define GREEN_BTN_PIN   4
-#define RED_BTN_PIN     5
+#define ACTION_BTN_PIN  4
 
 MFRC522 mfrc522(SS_PIN, RST_PIN);
+LiquidCrystal lcd(13, 12, 14, 27, 26, 25); // RS, E, D4, D5, D6, D7
 
 const String SCANNER_ID = "SCN-014-003";
 const String SECRET_KEY = "super_secret_hmac_key_for_demo"; // In production, store in secure enclave
@@ -18,18 +19,25 @@ const String DATA_FILE = "/records.jsonl";
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial);
+  
+  lcd.begin(16, 2);
+  lcd.clear();
+  lcd.print("Booting...");
 
   SPI.begin();
   mfrc522.PCD_Init();
   
-  pinMode(GREEN_BTN_PIN, INPUT_PULLUP);
-  pinMode(RED_BTN_PIN, INPUT_PULLUP);
+  pinMode(ACTION_BTN_PIN, INPUT_PULLUP);
 
   if(!LittleFS.begin(true)){
     Serial.println("LittleFS Mount Failed");
+    lcd.clear();
+    lcd.print("FS Mount Failed!");
     return;
   }
+  
+  lcd.clear();
+  lcd.print("Ready to Scan...");
 }
 
 void loop() {
@@ -48,24 +56,36 @@ void loop() {
   
   mfrc522.PICC_HaltA(); // Stop reading
 
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Tag Scanned!");
+  lcd.setCursor(0, 1);
+  lcd.print("Press for DONE");
+
   // Wait for button press (timeout after 5 seconds)
   unsigned long startTime = millis();
-  int status = -1;
+  int status = 0; // Default to 0 (Not Done)
   while(millis() - startTime < 5000) {
-    if (digitalRead(GREEN_BTN_PIN) == LOW) {
+    if (digitalRead(ACTION_BTN_PIN) == LOW) {
       status = 1;
-      break;
-    }
-    if (digitalRead(RED_BTN_PIN) == LOW) {
-      status = 0;
       break;
     }
     delay(10);
   }
 
-  if (status != -1) {
-    saveRecord(tagUID, status);
+  saveRecord(tagUID, status);
+  
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  if (status == 1) {
+    lcd.print("Success: DONE");
+  } else {
+    lcd.print("Saved: NOT DONE");
   }
+  delay(2000);
+  
+  lcd.clear();
+  lcd.print("Ready to Scan...");
 }
 
 void saveRecord(String tagUID, int status) {
