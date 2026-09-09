@@ -77,7 +77,7 @@ void saveRecord(String tagUID, int status) {
   String payload = SCANNER_ID + tagUID + String(timestamp) + String(status);
   String hmac = calculateHMAC(payload);
 
-  StaticJsonDocument<256> doc;
+  JsonDocument doc;
   doc["scanner_id"] = SCANNER_ID;
   doc["tag_uid"] = "0x" + tagUID;
   doc["timestamp"] = timestamp;

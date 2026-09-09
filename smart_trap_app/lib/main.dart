@@ -3,7 +3,8 @@ import 'package:pocketbase/pocketbase.dart';
 import 'package:crypto/crypto.dart';
 import 'dart:convert';
 import 'dart:async';
-//import 'package:flutter/foundation.dart';
+import 'package:flutter_libserialport/flutter_libserialport.dart';
+import 'serial_connection.dart';
 
 final pb = PocketBase('http://127.0.0.1:8090');
 
@@ -23,6 +24,7 @@ class SmartTrapApp extends StatelessWidget {
         useMaterial3: true,
       ),
       home: const DashboardScreen(),
+      debugShowCheckedModeBanner: false,
     );
   }
 }
@@ -55,9 +57,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: const Text('SMART-TRAP Dashboard'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
-      body: Center(
-        child: _widgetOptions.elementAt(_selectedIndex),
-      ),
+      body: _widgetOptions.elementAt(_selectedIndex),
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(
@@ -98,109 +98,131 @@ class _SyncToolWidgetState extends State<SyncToolWidget> {
     });
   }
 
-  Future<void> _startMockSync() async {
+  Future<SerialConnection?> _autoDetectESP32() async {
+    _addLog("Scanning available ports...");
+    for (final name in SerialPort.availablePorts) {
+      _addLog("Checking port: $name");
+      SerialConnection? conn;
+      try {
+        conn = SerialConnection(name);
+        await Future.delayed(const Duration(milliseconds: 1500));
+        conn.writeLine("PING");
+        final response = await conn.readLine(timeout: const Duration(milliseconds: 2000));
+        if (response == "PONG") {
+          _addLog("ESP32 found on $name!");
+          return conn;
+        }
+      } catch (e) {
+        _addLog("Failed on $name: $e");
+      }
+      conn?.close();
+    }
+    return null;
+  }
+
+  Future<void> _startRealSync() async {
     setState(() {
       _isSyncing = true;
       _logMessages.clear();
-      _statusMessage = "Connecting to ESP32 over Serial (Mock)...";
+      _statusMessage = "Auto-detecting ESP32 over USB...";
     });
 
-    _addLog("Sending PING to device...");
-    await Future.delayed(const Duration(seconds: 1));
-    _addLog("Received PONG.");
-    
-    _addLog("Sending DUMP command...");
-    await Future.delayed(const Duration(milliseconds: 500));
-    
-    // Create a mock payload
-    // Payload = SCANNER_ID + TAG_UID + TIMESTAMP + STATUS
-    const scannerId = "SCN-014-003";
-    const tagUid = "0xE0040150A9B2C1D4";
-    const timestamp = 1787654400;
-    const status = 1;
-    
-    // We mock the secret key from the pocketbase database
-    // For demo, we just use a hardcoded one or fetch it
-    const secretKey = "super_secret_hmac_key_for_demo";
-    
-    final hmac = Hmac(sha256, utf8.encode(secretKey));
-    
-    // In actual implementation, ESP32 tagUID has NO 0x during hashing.
-    // Let's just create exactly what ESP32 creates:
-    final actualPayloadToHash = "$scannerId${tagUid.substring(2)}$timestamp$status";
-    final expectedHmac = hmac.convert(utf8.encode(actualPayloadToHash)).toString();
-
-    final mockJson = {
-      "scanner_id": scannerId,
-      "tag_uid": tagUid,
-      "timestamp": timestamp,
-      "status": status,
-      "hmac": expectedHmac
-    };
-
-    _addLog("DATA: ${jsonEncode(mockJson)}");
-    _addLog("END");
-
-    _addLog("Verifying HMAC...");
-    
-    // Try to find the scanner in PocketBase
+    SerialConnection? conn;
     try {
-      final records = await pb.collection('scanners').getList(filter: 'scanner_id = "$scannerId"');
-      String serverKey = secretKey; // fallback
-      String scannerDbId = "";
-      if (records.items.isNotEmpty) {
-        serverKey = records.items.first.getStringValue('secret_key');
-        scannerDbId = records.items.first.id;
-      } else {
-        // Create mock scanner for first run
-        final newScanner = await pb.collection('scanners').create(body: {
-          "scanner_id": scannerId,
-          "secret_key": secretKey,
-          "status": "active"
-        });
-        serverKey = secretKey;
-        scannerDbId = newScanner.id;
-        _addLog("Registered new scanner in PocketBase.");
+      conn = await _autoDetectESP32();
+      if (conn == null) {
+        throw Exception("ESP32 not found. Check USB connection and Linux dialout permissions.");
       }
-      
-      final receivedPayloadToHash = "${mockJson['scanner_id']}${mockJson['tag_uid'].toString().substring(2)}${mockJson['timestamp']}${mockJson['status']}";
-      final serverHmac = Hmac(sha256, utf8.encode(serverKey));
-      final serverDigest = serverHmac.convert(utf8.encode(receivedPayloadToHash)).toString();
 
-      if (serverDigest == mockJson['hmac']) {
-        _addLog("✅ HMAC Verified! Record is authentic.");
-        
-        // Ensure property exists
-        final props = await pb.collection('properties').getList(filter: 'tag_uid = "$tagUid"');
-        String propId = "";
-        if (props.items.isEmpty) {
-           final newProp = await pb.collection('properties').create(body: {
-             "tag_uid": tagUid,
-             "eb_sc_number": "TN-DEMO-${DateTime.now().millisecondsSinceEpoch}",
-             "property_type": "residential"
-           });
-           propId = newProp.id;
-        } else {
-           propId = props.items.first.id;
+      _addLog("Sending DUMP command...");
+      conn.writeLine("DUMP");
+      
+      List<Map<String, dynamic>> records = [];
+      while (true) {
+        final line = await conn.readLine(timeout: const Duration(seconds: 5));
+        if (line == "END") {
+          break;
+        } else if (line.startsWith("DATA:")) {
+          final jsonStr = line.substring(5);
+          try {
+             records.add(jsonDecode(jsonStr));
+             _addLog("DATA: $jsonStr");
+          } catch(e) {
+             _addLog("Invalid JSON: $jsonStr");
+          }
         }
-
-        // Upload to PocketBase
-        await pb.collection('audit_logs').create(body: {
-          "scanner": scannerDbId,
-          "property": propId,
-          "timestamp": DateTime.fromMillisecondsSinceEpoch(timestamp * 1000).toIso8601String(), // In real app, timestamp is epoch ms or sec. Our ESP32 used millis(). Let's just use current time for demo.
-          "status": status == 1,
-          "hmac_verified": true
-        });
-        
-        _addLog("Uploaded valid record to PocketBase.");
-      } else {
-        _addLog("❌ HMAC Mismatch! Data tampered.");
       }
       
-      _addLog("Sending CLEAR command...");
-      await Future.delayed(const Duration(milliseconds: 500));
-      _addLog("Received CLEARED.");
+      _addLog("Verifying HMACs for ${records.length} records...");
+      
+      for (final jsonPayload in records) {
+        final scannerId = jsonPayload['scanner_id'];
+        final tagUid = jsonPayload['tag_uid'];
+        final timestamp = jsonPayload['timestamp'];
+        final status = jsonPayload['status'];
+        final payloadHmac = jsonPayload['hmac'];
+
+        final recordsList = await pb.collection('scanners').getList(filter: 'scanner_id = "$scannerId"');
+        String serverKey = "super_secret_hmac_key_for_demo"; // fallback
+        String scannerDbId = "";
+        
+        if (recordsList.items.isNotEmpty) {
+          serverKey = recordsList.items.first.getStringValue('secret_key');
+          scannerDbId = recordsList.items.first.id;
+        } else {
+          final newScanner = await pb.collection('scanners').create(body: {
+            "scanner_id": scannerId,
+            "secret_key": serverKey,
+            "status": "active"
+          });
+          scannerDbId = newScanner.id;
+          _addLog("Registered new scanner in PocketBase.");
+        }
+        final receivedPayloadToHash = "$scannerId${tagUid.toString().substring(2)}$timestamp$status";
+        final serverHmacObj = Hmac(sha256, utf8.encode(serverKey));
+        final serverDigest = serverHmacObj.convert(utf8.encode(receivedPayloadToHash)).toString();
+
+        if (serverDigest == payloadHmac) {
+          _addLog("✅ HMAC Verified! Record authentic.");
+          
+          final props = await pb.collection('properties').getList(filter: 'tag_uid = "$tagUid"');
+          String propId = "";
+          if (props.items.isEmpty) {
+             final wards = await pb.collection('wards').getList(page: 1, perPage: 1);
+             String wardId = wards.items.isNotEmpty ? wards.items.first.id : "";
+             final newProp = await pb.collection('properties').create(body: {
+               "tag_uid": tagUid,
+               "eb_sc_number": "TN-DEMO-${DateTime.now().millisecondsSinceEpoch}",
+               "property_type": "residential",
+               "ward": wardId
+             });
+             propId = newProp.id;
+          } else {
+             propId = props.items.first.id;
+          }
+
+          await pb.collection('audit_logs').create(body: {
+            "scanner": scannerDbId,
+            "property": propId,
+            "timestamp": DateTime.fromMillisecondsSinceEpoch(timestamp).toIso8601String(),
+            "status": status == 1,
+            "hmac_verified": true
+          });
+        } else {
+          _addLog("❌ HMAC Mismatch! Data tampered.");
+        }
+      }
+      
+      if (records.isNotEmpty) {
+        _addLog("Sending CLEAR command...");
+        conn.writeLine("CLEAR");
+        final clearResp = await conn.readLine(timeout: const Duration(seconds: 3));
+        if (clearResp == "CLEARED") {
+          _addLog("Device memory wiped.");
+        }
+      } else {
+        _addLog("No records to sync.");
+      }
       
       setState(() {
         _statusMessage = "Sync Complete.";
@@ -214,6 +236,8 @@ class _SyncToolWidgetState extends State<SyncToolWidget> {
         _isSyncing = false;
       });
       _showConnectionError();
+    } finally {
+      conn?.close();
     }
   }
 
@@ -261,8 +285,9 @@ class _SyncToolWidgetState extends State<SyncToolWidget> {
           Text(_statusMessage, style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 16),
           ElevatedButton(
-            onPressed: _isSyncing ? null : _startMockSync,
-            child: const Text("Start ESP32 Sync (Mock)"),
+            onPressed: _isSyncing ? null : _startRealSync,
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.black),
+            child: const Text("Start ESP32 Sync", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
           ),
           const SizedBox(height: 16),
           Expanded(
