@@ -123,6 +123,29 @@ def try_usb_reset(port_path):
         return False, f"USB reset error: {e}"
 
 
+def reset_esp32(fd):
+    """Reliably reset ESP32 into application mode by manipulating DTR and RTS."""
+    try:
+        # Constants for ioctl
+        TIOCMBIC = 0x5417
+        TIOCMBIS = 0x5416
+        TIOCM_DTR = 0x002
+        TIOCM_RTS = 0x004
+        
+        # 1. Reset (EN=0, IO0=1)
+        # DTR=False (0), RTS=True (1)
+        fcntl.ioctl(fd, TIOCMBIC, struct.pack('I', TIOCM_DTR))
+        fcntl.ioctl(fd, TIOCMBIS, struct.pack('I', TIOCM_RTS))
+        time.sleep(0.1)
+        
+        # 2. Normal run (EN=1, IO0=1)
+        # DTR=False (0), RTS=False (0)
+        fcntl.ioctl(fd, TIOCMBIC, struct.pack('I', TIOCM_DTR | TIOCM_RTS))
+        time.sleep(0.5) # Wait a bit for boot to start
+    except Exception as e:
+        pass
+
+
 def try_open_port(port_path, max_retries=5, retry_delay=1.0):
     """Try to open a serial port with retries and USB reset fallback."""
     global serial_fd
@@ -135,6 +158,7 @@ def try_open_port(port_path, max_retries=5, retry_delay=1.0):
             fcntl.fcntl(fd, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
             
             configure_port(fd)
+            reset_esp32(fd)
             serial_fd = fd
             return True, f"Opened successfully (attempt {attempt + 1})"
         except OSError as e:

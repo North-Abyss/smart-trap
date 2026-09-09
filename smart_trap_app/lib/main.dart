@@ -248,9 +248,12 @@ class _SyncToolWidgetState extends State<SyncToolWidget> {
           if (props.items.isEmpty) {
              final wards = await pb.collection('wards').getList(page: 1, perPage: 1);
              String wardId = wards.items.isNotEmpty ? wards.items.first.id : "";
+             final randomNum = DateTime.now().millisecondsSinceEpoch % 10000;
              final newProp = await pb.collection('properties').create(body: {
                "tag_uid": tagUid,
                "eb_sc_number": "TN-DEMO-${DateTime.now().millisecondsSinceEpoch}",
+               "owner_name": "Resident User $randomNum",
+               "phone_number": "+91-98765${randomNum.toString().padLeft(4, '0')}",
                "property_type": "residential",
                "ward": wardId
              });
@@ -262,7 +265,7 @@ class _SyncToolWidgetState extends State<SyncToolWidget> {
           await pb.collection('audit_logs').create(body: {
             "scanner": scannerDbId,
             "property": propId,
-            "timestamp": DateTime.fromMillisecondsSinceEpoch(timestamp).toIso8601String(),
+            "timestamp": DateTime.now().toIso8601String(),
             "status": status == 1,
             "hmac_verified": true
           });
@@ -437,18 +440,58 @@ class _ComplianceDashboardWidgetState extends State<ComplianceDashboardWidget> {
                     final propertyVal = log.getStringValue('expand.property.eb_sc_number');
                     final property = propertyVal.isEmpty ? "Unknown" : propertyVal;
                     
+                    final ownerNameVal = log.getStringValue('expand.property.owner_name');
+                    final ownerName = ownerNameVal.isEmpty ? "Unknown Owner" : ownerNameVal;
+                    final phoneVal = log.getStringValue('expand.property.phone_number');
+                    final phone = phoneVal.isEmpty ? "No Phone" : phoneVal;
+                    
                     return Card(
-                      child: ListTile(
-                        leading: Icon(
-                          isGreen ? Icons.check_circle : Icons.warning,
-                          color: isGreen ? Colors.green : Colors.red,
-                        ),
-                        title: Text("Property EB: $property"),
-                        subtitle: Text("Scanned: ${log.getStringValue('created')}"),
-                        trailing: isVerified 
-                          ? const Tooltip(message: "HMAC Verified", child: Icon(Icons.verified_user, color: Colors.blue))
-                          : const Tooltip(message: "Tampered", child: Icon(Icons.gpp_bad, color: Colors.red)),
-                      ),
+                      elevation: 2,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  isGreen ? Icons.check_circle : Icons.warning,
+                                  color: isGreen ? Colors.green : Colors.red,
+                                  size: 28,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(ownerName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                      const SizedBox(height: 4),
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.phone, size: 14, color: Colors.grey),
+                                          const SizedBox(width: 4),
+                                          Text(phone, style: const TextStyle(color: Colors.grey)),
+                                          const SizedBox(width: 16),
+                                          const Icon(Icons.electric_bolt, size: 14, color: Colors.grey),
+                                          const SizedBox(width: 4),
+                                          Text(property, style: const TextStyle(color: Colors.grey)),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                isVerified 
+                                  ? const Tooltip(message: "HMAC Verified", child: Icon(Icons.verified_user, color: Colors.blue))
+                                  : const Tooltip(message: "Tampered", child: Icon(Icons.gpp_bad, color: Colors.red)),
+                              ],
+                            ),
+                            const Divider(height: 24),
+                            Text("Scanned: ${log.getStringValue('created')}", style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          ]
+                        )
+                      )
                     );
                   },
                 ),

@@ -5,8 +5,8 @@
 #include <ArduinoJson.h>
 #include <mbedtls/md.h>
 
-#define RST_PIN         9
-#define SS_PIN          10
+#define RST_PIN         22
+#define SS_PIN          21
 #define GREEN_BTN_PIN   4
 #define RED_BTN_PIN     5
 

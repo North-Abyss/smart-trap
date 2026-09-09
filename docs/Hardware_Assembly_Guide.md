@@ -20,8 +20,8 @@ The MFRC522 uses the standard hardware SPI interface (VSPI) on the ESP32.
 | :--- | :--- | :--- |
 | **3.3V** | **3.3V** | ⚠️ **DO NOT CONNECT TO 5V**, this will burn the MFRC522! |
 | **GND** | **GND** | Ground |
-| **RST** | **GPIO 9** | Reset Pin (as defined in `esp32_scanner.ino`) |
-| **SDA (SS)**| **GPIO 10** | Slave Select (as defined in `esp32_scanner.ino`) |
+| **RST** | **GPIO 22** | Reset Pin (as defined in `esp32_scanner.ino`) |
+| **SDA (SS)**| **GPIO 21** | Slave Select (as defined in `esp32_scanner.ino`) |
 | **MOSI** | **GPIO 23** | Standard ESP32 SPI MOSI |
 | **MISO** | **GPIO 19** | Standard ESP32 SPI MISO |
 | **SCK** | **GPIO 18** | Standard ESP32 SPI Clock |
