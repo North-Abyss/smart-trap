@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
@@ -18,8 +19,11 @@ class SerialConnection {
     config.baudRate = 115200;
     port.config = config;
     reader = SerialPortReader(port, timeout: 1000);
+    print("SerialConnection: Opened reader for $portName");
     sub = reader.stream.listen((data) {
-      _buffer += utf8.decode(data, allowMalformed: true);
+      String chunk = utf8.decode(data, allowMalformed: true);
+      print("SerialConnection RAW data: $chunk");
+      _buffer += chunk;
       while (_buffer.contains('\n')) {
         int idx = _buffer.indexOf('\n');
         String line = _buffer.substring(0, idx).trim();
@@ -43,6 +47,7 @@ class SerialConnection {
   }
   
   void writeLine(String line) {
+    print("SerialConnection WRITE: $line");
     port.write(Uint8List.fromList(utf8.encode("$line\n")));
   }
   
@@ -51,7 +56,9 @@ class SerialConnection {
       return _lineQueue.removeAt(0);
     }
     _waiter = Completer<String>();
+    print("SerialConnection: Waiting for readLine (timeout ${timeout.inSeconds}s)...");
     return _waiter!.future.timeout(timeout, onTimeout: () {
+      print("SerialConnection: Timeout elapsed!");
       _waiter = null;
       throw TimeoutException("Serial read timeout");
     });

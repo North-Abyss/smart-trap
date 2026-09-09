@@ -3,8 +3,7 @@ import 'package:pocketbase/pocketbase.dart';
 import 'package:crypto/crypto.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'package:flutter_libserialport/flutter_libserialport.dart';
-import 'serial_connection.dart';
+import 'process_serial_connection.dart';
 
 final pb = PocketBase('http://127.0.0.1:8090');
 
@@ -98,25 +97,70 @@ class _SyncToolWidgetState extends State<SyncToolWidget> {
     });
   }
 
-  Future<SerialConnection?> _autoDetectESP32() async {
-    _addLog("Scanning available ports...");
-    for (final name in SerialPort.availablePorts) {
-      _addLog("Checking port: $name");
-      SerialConnection? conn;
-      try {
-        conn = SerialConnection(name);
-        await Future.delayed(const Duration(milliseconds: 1500));
-        conn.writeLine("PING");
-        final response = await conn.readLine(timeout: const Duration(milliseconds: 2000));
-        if (response == "PONG") {
-          _addLog("ESP32 found on $name!");
-          return conn;
-        }
-      } catch (e) {
-        _addLog("Failed on $name: $e");
-      }
-      conn?.close();
+  Future<ProcessSerialConnection?> _autoDetectESP32Bridge() async {
+    _addLog("Starting Python serial bridge...");
+    final bridge = await ProcessSerialConnection.start();
+    if (bridge == null) {
+      _addLog("Failed to start serial bridge process.");
+      return null;
     }
+
+    _addLog("Scanning ports via bridge...");
+    final ports = await bridge.scanPorts();
+    _addLog("Found ${ports.length} port(s): ${ports.join(', ')}");
+
+    if (ports.isEmpty) {
+      _addLog("No serial ports found. Is the ESP32 plugged in?");
+      bridge.close();
+      return null;
+    }
+
+    for (final portName in ports) {
+      _addLog("Trying to open $portName...");
+      final opened = await bridge.openPort(portName);
+      if (!opened) {
+        _addLog("Could not open $portName (busy or permission denied).");
+        continue;
+      }
+
+      // The CP2102 DTR/RTS lines reset the ESP32 when the port is opened.
+      // The ESP32 will spam boot messages for a few seconds. We need to
+      // aggressively ping it and drain everything until we get PONG.
+      _addLog("Opened $portName. Waiting for device to be ready...");
+      
+      bool found = false;
+      final deadline = DateTime.now().add(const Duration(seconds: 15));
+      
+      while (DateTime.now().isBefore(deadline)) {
+        await bridge.sendData("PING");
+        
+        // Read lines until we timeout (meaning buffer is empty for now)
+        while (true) {
+          final resp = await bridge.readSerialLine(timeout: const Duration(milliseconds: 300));
+          if (resp == null) break; // Buffer empty, exit inner read loop
+          
+          if (resp.trim() == "PONG") {
+             found = true;
+             break;
+          } else {
+             // Print boot messages or other noise
+             _addLog("  (ignored) $resp");
+          }
+        }
+        
+        if (found) break;
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+
+      if (found) {
+        _addLog("✅ ESP32 found on $portName!");
+        return bridge;
+      } else {
+        _addLog("Not an ESP32 on $portName (never received PONG).");
+      }
+    }
+
+    bridge.close();
     return null;
   }
 
@@ -127,19 +171,33 @@ class _SyncToolWidgetState extends State<SyncToolWidget> {
       _statusMessage = "Auto-detecting ESP32 over USB...";
     });
 
-    SerialConnection? conn;
+    ProcessSerialConnection? bridge;
     try {
-      conn = await _autoDetectESP32();
-      if (conn == null) {
-        throw Exception("ESP32 not found. Check USB connection and Linux dialout permissions.");
+      bridge = await _autoDetectESP32Bridge();
+      if (bridge == null) {
+        throw Exception(
+          "ESP32 not found.\n"
+          "Troubleshooting:\n"
+          "  1. Is the ESP32 plugged in via USB?\n"
+          "  2. Run: sudo systemctl stop ModemManager\n"
+          "  3. Try unplugging and re-plugging the USB cable.\n"
+          "  4. If EBUSY persists, run:\n"
+          "     echo '1-2' | sudo tee /sys/bus/usb/drivers/usb/unbind\n"
+          "     sleep 1\n"
+          "     echo '1-2' | sudo tee /sys/bus/usb/drivers/usb/bind"
+        );
       }
 
       _addLog("Sending DUMP command...");
-      conn.writeLine("DUMP");
+      await bridge.sendData("DUMP");
       
       List<Map<String, dynamic>> records = [];
       while (true) {
-        final line = await conn.readLine(timeout: const Duration(seconds: 5));
+        final line = await bridge.readSerialLine(timeout: const Duration(seconds: 5));
+        if (line == null) {
+          _addLog("Timeout waiting for data. Ending read.");
+          break;
+        }
         if (line == "END") {
           break;
         } else if (line.startsWith("DATA:")) {
@@ -215,8 +273,8 @@ class _SyncToolWidgetState extends State<SyncToolWidget> {
       
       if (records.isNotEmpty) {
         _addLog("Sending CLEAR command...");
-        conn.writeLine("CLEAR");
-        final clearResp = await conn.readLine(timeout: const Duration(seconds: 3));
+        await bridge.sendData("CLEAR");
+        final clearResp = await bridge.readSerialLine(timeout: const Duration(seconds: 3));
         if (clearResp == "CLEARED") {
           _addLog("Device memory wiped.");
         }
@@ -235,13 +293,13 @@ class _SyncToolWidgetState extends State<SyncToolWidget> {
         _statusMessage = "Sync Failed.";
         _isSyncing = false;
       });
-      _showConnectionError();
+      _showConnectionError(e.toString());
     } finally {
-      conn?.close();
+      bridge?.close();
     }
   }
 
-  void _showConnectionError() {
+  void _showConnectionError(String errorDetail) {
     Timer? timer;
     showDialog(
       context: context,
@@ -256,7 +314,7 @@ class _SyncToolWidgetState extends State<SyncToolWidget> {
 
         return AlertDialog(
           title: const Text("Device Not Connected"),
-          content: const Text("The device is not connected correctly or sync failed. Please check the USB connection and try again."),
+          content: Text("The device is not connected correctly or sync failed.\n\nDetail: $errorDetail\n\nIf you recently ran 'usermod', remember to restart your IDE or log out and back in."),
           actions: <Widget>[
             TextButton(
               child: const Text('Close'),
