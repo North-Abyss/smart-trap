@@ -5,8 +5,7 @@ This document details the working and component architecture of the SMART-TRAP E
 
 The device is designed for offline RFID scanning by sanitation workers. It is completely bus-powered, meaning it uses **no external battery**. It operates exclusively over a USB connection when plugged into a Municipal Depot Computer, handling both power delivery and serial data synchronization.
 
-![Prototype Hardware Setup](./prototype_image.jpg)
-*(Note: Please rename the image you uploaded to `prototype_image.jpg` and place it in the `docs` folder, or update the path above).*
+![Prototype Hardware Setup](./prototype-v0.png)
 
 ## 2. Hardware Components
 
