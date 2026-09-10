@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include <mbedtls/md.h>
 #include <LiquidCrystal_I2C.h>
+#include "driver/gpio.h"
 
 #define RST_PIN         15
 #define SS_PIN          13
@@ -26,8 +27,49 @@ void setup() {
   lcd.clear();
   lcd.print("Booting...");
 
-  SPI.begin();
+  // CRITICAL: GPIO 13 and 15 are HSPI peripheral pins on the ESP32.
+  // We must detach them from the HSPI hardware before using them as regular GPIO
+  // for the MFRC522's CS and RST lines.
+  gpio_reset_pin(GPIO_NUM_13);
+  gpio_reset_pin(GPIO_NUM_15);
+  
+  // Set SPI pins explicitly: SCK=18, MISO=19, MOSI=23
+  // Pass -1 for SS so hardware SPI doesn't claim any CS pin
+  SPI.begin(18, 19, 23, -1);
+  
+  // Hard reset the MFRC522 via RST pin
+  pinMode(RST_PIN, OUTPUT);
+  digitalWrite(RST_PIN, LOW);
+  delay(50);
+  digitalWrite(RST_PIN, HIGH);
+  delay(100);
+  
   mfrc522.PCD_Init();
+  delay(200); // Give the MFRC522 time to fully initialize
+  
+  // Debug: Check if the MFRC522 is connected properly
+  Serial.print(F("MFRC522 Firmware Version: 0x"));
+  byte v = mfrc522.PCD_ReadRegister(mfrc522.VersionReg);
+  Serial.println(v, HEX);
+  if (v == 0x00 || v == 0xFF) {
+    Serial.println(F("WARNING: Communication failure, is the MFRC522 properly connected?"));
+    lcd.clear();
+    lcd.print("RFID Error!");
+    lcd.setCursor(0, 1);
+    lcd.print("Check Wiring");
+    delay(3000);
+  } else {
+    Serial.println(F("MFRC522 connected OK! (Clone chip detected, skipping self-test)"));
+  }
+  
+  // Explicitly turn the antenna ON (critical for clone chips!)
+  mfrc522.PCD_AntennaOn();
+  delay(50);
+  
+  // Boost antenna gain to maximum for better card detection range
+  mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
+  Serial.print(F("Antenna Gain set to: 0x"));
+  Serial.println(mfrc522.PCD_GetAntennaGain(), HEX);
   
   pinMode(BTN_GREEN_PIN, INPUT_PULLUP);
   pinMode(BTN_BLUE_PIN, INPUT_PULLUP);
@@ -43,12 +85,22 @@ void setup() {
   lcd.print("Ready to Scan...");
 }
 
+// Debug: print a heartbeat every 3 seconds so we know the loop is running
+unsigned long lastHeartbeat = 0;
+
 void loop() {
   handleSerialCommands();
 
+  if (millis() - lastHeartbeat > 3000) {
+    lastHeartbeat = millis();
+    Serial.println(F("[DEBUG] Waiting for card..."));
+  }
+
   // Look for new cards
   if ( ! mfrc522.PICC_IsNewCardPresent()) return;
+  Serial.println(F("[DEBUG] Card detected! Attempting to read..."));
   if ( ! mfrc522.PICC_ReadCardSerial()) return;
+  Serial.println(F("[DEBUG] Card UID read successfully!"));
 
   String tagUID = "";
   for (byte i = 0; i < mfrc522.uid.size; i++) {
