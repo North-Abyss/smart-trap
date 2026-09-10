@@ -25,39 +25,35 @@ The MFRC522 uses the standard hardware SPI interface (VSPI) on the ESP32.
 | :--- | :--- | :--- |
 | **3.3V** | **3.3V** | ⚠️ **DO NOT CONNECT TO 5V**, this will burn the MFRC522! |
 | **GND** | **GND** | Ground |
-| **RST** | **D22** | Reset Pin |
-| **SDA (SS)**| **D21** | Slave Select |
+| **RST** | **D15** | Reset Pin |
+| **SDA (SS)**| **D13** | Slave Select |
 | **MOSI** | **D23** | Standard ESP32 SPI MOSI |
 | **MISO** | **D19** | Standard ESP32 SPI MISO |
 | **SCK** | **D18** | Standard ESP32 SPI Clock |
 | **IRQ** | *Unconnected* | Not used in this project |
 
-### 2. 16x2 LCD Connections (4-Bit Parallel Mode)
-The LCD is wired directly to the ESP32 using 6 GPIO pins for data and control.
+### 2. 16x2 LCD with I2C Backpack Connections
+Since you are using an I2C backpack (as pictured), you only need 4 wires to connect the LCD. This saves a lot of pins!
 
-| LCD Pin | Connection | Notes |
+
+| I2C Backpack Pin | ESP32 Connection | Notes |
 | :--- | :--- | :--- |
-| **1 (VSS)** | **GND** | Ground |
-| **2 (VDD)** | **VIN (5V)** | 5V Power for logic |
-| **3 (V0)** | **Potentiometer Center Pin** | Contrast adjustment. Outer pins to 5V and GND. |
-| **4 (RS)** | **D13** | Register Select |
-| **5 (RW)** | **GND** | Read/Write (always ground to Write) |
-| **6 (E)** | **D12** | Enable |
-| **11 (D4)** | **D14** | Data line 4 |
-| **12 (D5)** | **D27** | Data line 5 |
-| **13 (D6)** | **D26** | Data line 6 |
-| **14 (D7)** | **D25** | Data line 7 |
-| **15 (A)** | **VIN (5V)** | Backlight Anode (+) |
-| **16 (K)** | **GND** | Backlight Cathode (-) |
+| **GND** | **GND** | Ground |
+| **VCC** | **VIN (5V)** | Power (5V is required for the backlight and LCD contrast) |
+| **SDA** | **D21** | I2C Data Line (Default) |
+| **SCL** | **D22** | I2C Clock Line (Default) |
+
+*(Note: The potentiometer on the blue I2C backpack can be turned with a small Phillips screwdriver to adjust the screen's contrast if the text is not visible).*
 
 ### 3. Button Connections
-The button is configured with `INPUT_PULLUP` in the code, which means you do **not** need an external resistor. 
+The buttons are configured with `INPUT_PULLUP` in the code, which means you do **not** need external resistors. 
 
 | Button | Leg 1 (Signal) | Leg 2 (Ground) |
 | :--- | :--- | :--- |
-| **Action Button** | **D4** | **GND** |
+| **Green Button (DONE)** | **D4** | **GND** |
+| **Blue Button (SKIP)** | **D5** | **GND** |
 
-*Note: When the button is pressed, it connects the GPIO pin to Ground, pulling the signal `LOW`. The code detects this `LOW` signal to log the scan as "DONE".*
+*Note: When a button is pressed, it connects the GPIO pin to Ground, pulling the signal `LOW`. The Green button logs the scan as "DONE", and the Blue button logs it as "NOT DONE".*
 
 ---
 

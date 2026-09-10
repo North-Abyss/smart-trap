@@ -4,14 +4,15 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <mbedtls/md.h>
-#include <LiquidCrystal.h>
+#include <LiquidCrystal_I2C.h>
 
-#define RST_PIN         22
-#define SS_PIN          21
-#define ACTION_BTN_PIN  4
+#define RST_PIN         15
+#define SS_PIN          13
+#define BTN_GREEN_PIN   4
+#define BTN_BLUE_PIN    5
 
 MFRC522 mfrc522(SS_PIN, RST_PIN);
-LiquidCrystal lcd(13, 12, 14, 27, 26, 25); // RS, E, D4, D5, D6, D7
+LiquidCrystal_I2C lcd(0x27, 16, 2); // Set the LCD address to 0x27 for a 16 chars and 2 line display
 
 const String SCANNER_ID = "SCN-014-003";
 const String SECRET_KEY = "super_secret_hmac_key_for_demo"; // In production, store in secure enclave
@@ -20,14 +21,16 @@ const String DATA_FILE = "/records.jsonl";
 void setup() {
   Serial.begin(115200);
   
-  lcd.begin(16, 2);
+  lcd.init();
+  lcd.backlight();
   lcd.clear();
   lcd.print("Booting...");
 
   SPI.begin();
   mfrc522.PCD_Init();
   
-  pinMode(ACTION_BTN_PIN, INPUT_PULLUP);
+  pinMode(BTN_GREEN_PIN, INPUT_PULLUP);
+  pinMode(BTN_BLUE_PIN, INPUT_PULLUP);
 
   if(!LittleFS.begin(true)){
     Serial.println("LittleFS Mount Failed");
@@ -60,14 +63,18 @@ void loop() {
   lcd.setCursor(0, 0);
   lcd.print("Tag Scanned!");
   lcd.setCursor(0, 1);
-  lcd.print("Press for DONE");
+  lcd.print("Grn:DONE Blu:SKP");
 
   // Wait for button press (timeout after 5 seconds)
   unsigned long startTime = millis();
   int status = 0; // Default to 0 (Not Done)
   while(millis() - startTime < 5000) {
-    if (digitalRead(ACTION_BTN_PIN) == LOW) {
+    if (digitalRead(BTN_GREEN_PIN) == LOW) {
       status = 1;
+      break;
+    }
+    if (digitalRead(BTN_BLUE_PIN) == LOW) {
+      status = 0;
       break;
     }
     delay(10);
