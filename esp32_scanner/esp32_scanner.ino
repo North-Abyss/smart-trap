@@ -34,7 +34,7 @@ void setup() {
   gpio_reset_pin(GPIO_NUM_15);
   
   // Set SPI pins explicitly: SCK=18, MISO=19, MOSI=23
-  // Pass -1 for SS so hardware SPI doesn't claim any CS pin
+  // Pass -1 for SS so hardware SPI doesn't claim any CS pin (we use D13 manually)
   SPI.begin(18, 19, 23, -1);
   
   // Hard reset the MFRC522 via RST pin
@@ -42,6 +42,10 @@ void setup() {
   digitalWrite(RST_PIN, LOW);
   delay(50);
   digitalWrite(RST_PIN, HIGH);
+  delay(100);
+  
+  // Software reset (critical for some clone chips that don't respond to hard reset alone)
+  mfrc522.PCD_Reset();
   delay(100);
   
   mfrc522.PCD_Init();
@@ -71,6 +75,18 @@ void setup() {
   Serial.print(F("Antenna Gain set to: 0x"));
   Serial.println(mfrc522.PCD_GetAntennaGain(), HEX);
   
+  // Verify antenna drivers are actually ON by reading TxControlReg
+  byte txControl = mfrc522.PCD_ReadRegister(mfrc522.TxControlReg);
+  Serial.print(F("TxControlReg: 0x"));
+  Serial.println(txControl, HEX);
+  if ((txControl & 0x03) != 0x03) {
+    Serial.println(F("WARNING: Antenna drivers OFF! Forcing ON..."));
+    mfrc522.PCD_WriteRegister(mfrc522.TxControlReg, txControl | 0x03);
+    Serial.println(F("Antenna drivers forced ON."));
+  } else {
+    Serial.println(F("Antenna drivers confirmed ON."));
+  }
+  
   pinMode(BTN_GREEN_PIN, INPUT_PULLUP);
   pinMode(BTN_BLUE_PIN, INPUT_PULLUP);
 
@@ -87,9 +103,19 @@ void setup() {
 
 // Debug: print a heartbeat every 3 seconds so we know the loop is running
 unsigned long lastHeartbeat = 0;
+unsigned long lastReinit = 0;
 
 void loop() {
   handleSerialCommands();
+
+  // Re-enable antenna every 30 seconds (clone chip workaround — some clones
+  // silently disable their antenna drivers after prolonged idle)
+  if (millis() - lastReinit > 30000) {
+    lastReinit = millis();
+    mfrc522.PCD_AntennaOn();
+    mfrc522.PCD_SetAntennaGain(mfrc522.RxGain_max);
+    Serial.println(F("[DEBUG] Antenna re-initialized (clone chip keepalive)"));
+  }
 
   if (millis() - lastHeartbeat > 3000) {
     lastHeartbeat = millis();
